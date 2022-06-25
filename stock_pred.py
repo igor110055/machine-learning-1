@@ -72,13 +72,13 @@ for i in range(60,inputs_data.shape[0]):
 X_test=np.array(X_test)
 
 X_test=np.reshape(X_test,(X_test.shape[0],X_test.shape[1],1))
-closing_price=model.predict(X_test)
+closing_price=lstm_model.predict(X_test)
 closing_price=scaler.inverse_transform(closing_price)
 
 lstm_model.save("saved_lstm_model.h5")
 
 train_data=new_dataset[:987]
 valid_data=new_dataset[987:]
-valid_data['Predictions']=prediction_closing
+valid_data['Predictions']=closing_price
 plt.plot(train_data["Close"])
 plt.plot(valid_data[['Close',"Predictions"]])
