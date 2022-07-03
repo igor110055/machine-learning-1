@@ -1,84 +1,84 @@
+import math
 import pandas as pd
 import numpy as np
-
-import matplotlib.pyplot as plt
-
-from matplotlib.pylab import rcParams
-rcParams['figure.figsize']=20,10
+import pandas_datareader as web
+import datetime as dt
 
 from sklearn.preprocessing import MinMaxScaler
-scaler=MinMaxScaler(feature_range=(0,1))
+from keras.models import load_model
 
-df=pd.read_csv("NSE-TATA.csv")
-df.head()
-
-df["Date"]=pd.to_datetime(df.Date,format="%Y-%m-%d")
-df.index=df['Date']
-
-plt.figure(figsize=(16,8))
-plt.plot(df["Close"],label='Close Price history')
-
-from keras.models import Sequential
-from keras.layers import LSTM,Dropout,Dense
-
-data=df.sort_index(ascending=True,axis=0)
-new_dataset=pd.DataFrame(index=range(0,len(df)),columns=['Date','Close'])
-
-for i in range(0,len(data)):
-    new_dataset["Date"][i]=data['Date'][i]
-    new_dataset["Close"][i]=data["Close"][i]
-    
-
-new_dataset.index=new_dataset.Date
-new_dataset.drop("Date",axis=1,inplace=True)
-
-final_dataset=new_dataset.values
-
-train_data=final_dataset[0:987,:]
-valid_data=final_dataset[987:,:]
-
-scaler=MinMaxScaler(feature_range=(0,1))
-scaled_data=scaler.fit_transform(final_dataset)
-
-x_train_data,y_train_data=[],[]
-
-for i in range(60,len(train_data)):
-    x_train_data.append(scaled_data[i-60:i,0])
-    y_train_data.append(scaled_data[i,0])
-    
-x_train_data,y_train_data=np.array(x_train_data),np.array(y_train_data)
-
-x_train_data=np.reshape(x_train_data,(x_train_data.shape[0],x_train_data.shape[1],1))
-
-lstm_model=Sequential()
-lstm_model.add(LSTM(units=50,return_sequences=True,input_shape=(x_train_data.shape[1],1)))
-lstm_model.add(LSTM(units=50))
-lstm_model.add(Dense(1))
+scaler = MinMaxScaler(feature_range=(0, 1))
 
 
+def get_valid_array(df, method):
+    model = load_model(f"models/{method.lower()}.h5")
+    data = df.filter(['Close'])
+    dataset = data.values
+    training_data_len = math.ceil(len(dataset) * .8)
+
+    # scale the data
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    scaled_data = scaler.fit_transform(dataset)
+
+    train_data = scaled_data[0:training_data_len, :]
+    test_data = scaled_data[training_data_len - 60:, :]
+
+    X_test = []
+    Y_test = dataset[training_data_len:, :]
+    for i in range(60, len(test_data)):
+        X_test.append(test_data[i-60:i, 0])
+    X_test = np.array(X_test)
+    X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
+    predicted_stock_price = model.predict(X_test)
+    predicted_stock_price = scaler.inverse_transform(predicted_stock_price)
+
+    train = data[:training_data_len]
+    actual = data[training_data_len:]
+
+    d = {"Close": predicted_stock_price.flatten()}
+    predicted_stock_price = pd.DataFrame(data=d)
+    predicted_stock_price.index = actual.index
+
+    return train, actual, predicted_stock_price
 
 
-lstm_model.compile(loss='mean_squared_error',optimizer='adam')
-lstm_model.fit(x_train_data,y_train_data,epochs=1,batch_size=1,verbose=2)
+def get_predicted_price(code, method, feature):
+    model = load_model(f"models/{method.lower()}.h5")
+    quote = web.DataReader(
+        code, data_source='yahoo', start='2020-01-01', end=dt.datetime.now().strftime("%Y-%m-%d"),
+    )
+    # create a new dataframe
+    new_df = quote.filter(['Close'])
 
-inputs_data=new_dataset[len(new_dataset)-len(valid_data)-60:].values
-inputs_data=inputs_data.reshape(-1,1)
-inputs_data=scaler.transform(inputs_data)
+    # get the last 60 day closing price values and convert the dataframe to an array
+    last_60_days = new_df[-60:].values
 
+    # scale the data to be values between 0 and 1
+    last_60_days_scaled = scaler.fit_transform(last_60_days)
+    # create an empty list
+    X_test = []
+    # append the past 60 days
+    X_test.append(last_60_days_scaled)
+    # convert the X_test data to a numpy array
+    X_test = np.array(X_test)
+    # reshape
+    X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
+    # get the predicted scaled price
+    pred_price = model.predict(X_test)
+    # undo the scaling
+    pred_price = scaler.inverse_transform(pred_price)
 
-X_test=[]
-for i in range(60,inputs_data.shape[0]):
-    X_test.append(inputs_data[i-60:i,0])
-X_test=np.array(X_test)
+    train, actual, predicted = get_valid_array(quote, method)
 
-X_test=np.reshape(X_test,(X_test.shape[0],X_test.shape[1],1))
-closing_price=lstm_model.predict(X_test)
-closing_price=scaler.inverse_transform(closing_price)
+    today = dt.date.today()
+    today = dt.datetime(today.year, today.month, today.day)
+    today = today + dt.timedelta(days=1)
 
-lstm_model.save("saved_lstm_model.h5")
+    d = {"Close": [pred_price.item()]}
+    pred_price_ser = pd.DataFrame(
+        data=d, index=[today]
+    )
 
-train_data=new_dataset[:987]
-valid_data=new_dataset[987:]
-valid_data['Predictions']=closing_price
-plt.plot(train_data["Close"])
-plt.plot(valid_data[['Close',"Predictions"]])
+    final_predicted_price_data = pd.concat([predicted, pred_price_ser])
+
+    return train, actual, final_predicted_price_data
