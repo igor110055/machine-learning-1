@@ -3,7 +3,7 @@ import plotly.graph_objects as go
 from binance.client import Client
 from dash import Dash, dcc, html, Input, Output
 
-import stock_pred as pred
+import pred
 
 api_key = ''
 api_secret = ''
